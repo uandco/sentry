@@ -1,12 +1,13 @@
 import React from 'react';
 
 import {initializeOrg} from 'app-test/helpers/initializeOrg';
+import {mockRouterPush} from 'app-test/helpers/mockRouterPush';
 import {mount} from 'enzyme';
+import ConfigStore from 'app/stores/configStore';
 import GlobalSelectionHeader from 'app/components/organizations/globalSelectionHeader';
 import GlobalSelectionStore from 'app/stores/globalSelectionStore';
-import * as globalActions from 'app/actionCreators/globalSelection';
 import ProjectsStore from 'app/stores/projectsStore';
-import ConfigStore from 'app/stores/configStore';
+import * as globalActions from 'app/actionCreators/globalSelection';
 
 const changeQuery = (routerContext, query) => ({
   ...routerContext,
@@ -23,11 +24,22 @@ const changeQuery = (routerContext, query) => ({
 
 describe('GlobalSelectionHeader', function() {
   const {organization, router, routerContext} = initializeOrg({
-    organization: TestStubs.Organization({features: ['global-views']}),
+    organization: TestStubs.Organization({
+      features: ['global-views'],
+      projects: [
+        TestStubs.Project(),
+        TestStubs.Project({
+          id: '3',
+          slug: 'project-3',
+          environments: ['prod', 'staging'],
+        }),
+      ],
+    }),
     router: {
       location: {query: {}},
     },
   });
+  jest.spyOn(ProjectsStore, 'getAll').mockImplementation(() => organization.projects);
 
   beforeAll(function() {
     jest.spyOn(globalActions, 'updateDateTime');
@@ -103,41 +115,105 @@ describe('GlobalSelectionHeader', function() {
     });
   });
 
-  it('updates GlobalSelection store when re-rendered with different query params', async function() {
+  it('updates environments when switching projects that do not have overlapping environments', async function() {
     const wrapper = mount(
-      <GlobalSelectionHeader organization={organization} />,
-      changeQuery(routerContext, {
-        statsPeriod: '7d',
-      })
+      <GlobalSelectionHeader
+        organization={organization}
+        projects={organization.projects}
+      />,
+      routerContext
     );
 
-    wrapper.setContext(
-      changeQuery(routerContext, {
-        statsPeriod: '21d',
-      }).context
-    );
+    mockRouterPush(wrapper, router);
+
+    // Open dropdown and select both projects
+    wrapper.find('MultipleProjectSelector HeaderItem').simulate('click');
+    wrapper
+      .find('MultipleProjectSelector CheckboxWrapper')
+      .at(0)
+      .simulate('click');
+    wrapper
+      .find('MultipleProjectSelector CheckboxWrapper')
+      .at(1)
+      .simulate('click');
+    wrapper.find('MultipleProjectSelector HeaderItem').simulate('click');
     await tick();
     wrapper.update();
+    expect(wrapper.find('MultipleProjectSelector Content').text()).toBe(
+      'project-slug, project-3'
+    );
 
-    expect(globalActions.updateDateTime).toHaveBeenCalledWith({
-      period: '21d',
-      utc: null,
-      start: null,
-      end: null,
-    });
-    expect(globalActions.updateProjects).toHaveBeenCalledWith([]);
-    expect(globalActions.updateEnvironments).toHaveBeenCalledWith([]);
+    // Select environment
+    wrapper.find('MultipleEnvironmentSelector HeaderItem').simulate('click');
+    wrapper
+      .find('MultipleEnvironmentSelector CheckboxWrapper')
+      .at(1)
+      .simulate('click');
+    wrapper.find('MultipleEnvironmentSelector HeaderItem').simulate('click');
+    await tick();
+    // wrapper.update();
+    expect(wrapper.find('MultipleEnvironmentSelector Content').text()).toBe('staging');
 
     expect(GlobalSelectionStore.get()).toEqual({
       datetime: {
-        period: '21d',
+        period: null,
+        utc: null,
+        start: null,
+        end: null,
+      },
+      environments: ['staging'],
+      projects: [2, 3],
+    });
+    const query = wrapper.prop('location').query;
+    expect(query).toEqual({
+      environment: 'staging',
+      project: ['2', '3'],
+    });
+
+    // this is kind of shitty but if we use UI to change projects, GlobalSelectionHeader updates store
+    // before router get a chance to update its props
+    const newLocation = {
+      router: {
+        ...router,
+        location: {
+          ...router.location,
+          query: {
+            ...query,
+            project: ['2'],
+          },
+        },
+      },
+    };
+    wrapper.setProps(newLocation);
+    wrapper.update();
+
+    // Now change projects, first project has no enviroments
+    wrapper.find('MultipleProjectSelector HeaderItem').simulate('click');
+    wrapper
+      .find('MultipleProjectSelector CheckboxWrapper')
+      .at(1)
+      .simulate('click');
+
+    wrapper.find('MultipleProjectSelector HeaderItem').simulate('click');
+
+    await tick();
+    wrapper.update();
+
+    // Store should not have any environments selected
+    expect(GlobalSelectionStore.get()).toEqual({
+      datetime: {
+        period: null,
         utc: null,
         start: null,
         end: null,
       },
       environments: [],
-      projects: [],
+      projects: [2],
     });
+    expect(wrapper.prop('location').query).toEqual({project: '2'});
+    expect(wrapper.find('MultipleEnvironmentSelector Content').text()).toBe(
+      'All Environments'
+    );
   });
 
   it('updates GlobalSelection store with default period', async function() {
@@ -268,7 +344,7 @@ describe('GlobalSelectionHeader', function() {
     it('selects first project if none (i.e. all) is requested', function() {
       const project = TestStubs.Project({id: '3'});
       const org = TestStubs.Organization({projects: [project]});
-      ProjectsStore.loadInitialData(org.projects);
+      jest.spyOn(ProjectsStore, 'getAll').mockImplementation(() => org.projects);
 
       const initializationObj = initializeOrg({
         organization: org,
@@ -328,7 +404,7 @@ describe('GlobalSelectionHeader', function() {
       memberProject = TestStubs.Project({id: '3', isMember: true});
       nonMemberProject = TestStubs.Project({id: '4', isMember: false});
       const org = TestStubs.Organization({projects: [memberProject, nonMemberProject]});
-      ProjectsStore.loadInitialData(org.projects);
+      jest.spyOn(ProjectsStore, 'getAll').mockImplementation(() => org.projects);
 
       initialData = initializeOrg({
         organization: org,
