@@ -1,5 +1,8 @@
 from __future__ import absolute_import
 
+import logging
+import six
+
 from datetime import timedelta
 from functools import partial
 
@@ -19,11 +22,13 @@ from sentry.utils.snuba import (
     raw_query,
     transform_aliases_and_query,
     SnubaTSResult,
+    SnubaError,
 )
 from sentry import features
 from sentry.models.project import Project
 
 ALLOWED_GROUPINGS = frozenset(('issue.id', 'project.id'))
+logger = logging.getLogger(__name__)
 
 
 class OrganizationEventsEndpoint(OrganizationEventsEndpointBase):
@@ -89,7 +94,7 @@ class OrganizationEventsEndpoint(OrganizationEventsEndpointBase):
 
             if any(field for field in groupby if field not in ALLOWED_GROUPINGS):
                 message = ('Invalid groupby value requested. Allowed values are ' +
-                    ', '.join(ALLOWED_GROUPINGS))
+                           ', '.join(ALLOWED_GROUPINGS))
                 return Response({'detail': message}, status=400)
 
         except OrganizationEventsError as exc:
@@ -114,12 +119,25 @@ class OrganizationEventsEndpoint(OrganizationEventsEndpointBase):
             **snuba_args
         )
 
-        return self.paginate(
-            request=request,
-            paginator=GenericOffsetPaginator(data_fn=data_fn),
-            on_results=lambda results: self.handle_results(
-                request, organization, params['project_id'], results),
-        )
+        try:
+            return self.paginate(
+                request=request,
+                paginator=GenericOffsetPaginator(data_fn=data_fn),
+                on_results=lambda results: self.handle_results(
+                    request, organization, params['project_id'], results),
+            )
+        except SnubaError as error:
+            logger.info(
+                'organization.events.snuba-error',
+                extra={
+                    'organization_id': organization.id,
+                    'user_id': request.user.id,
+                    'error': six.text_type(error),
+                }
+            )
+            return Response({
+                'detail': 'Invalid query.'
+            }, status=400)
 
     def handle_results(self, request, organization, project_ids, results):
         projects = {p['id']: p['slug'] for p in Project.objects.filter(
