@@ -12,7 +12,7 @@ import {t} from 'app/locale';
 
 import AsyncComponent from 'app/components/asyncComponent';
 import HookStore from 'app/stores/hookStore';
-import marked, {singleLineRenderer} from 'app/utils/marked';
+import {singleLineRenderer} from 'app/utils/marked';
 import InlineSvg from 'app/components/inlineSvg';
 import Tag from 'app/views/settings/components/tag';
 
@@ -70,7 +70,6 @@ export default class SentryAppDetailsModal extends AsyncComponent {
 
     const {FeatureList, IntegrationFeatures} = featureListHooks[0]();
     const featureProps = {organization, features};
-    console.log(features);
     return (
       <React.Fragment>
         <Flex align="center" mb={2}>
